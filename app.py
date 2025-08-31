@@ -3,7 +3,6 @@ import streamlit as st
 from murf import Murf
 import pandas as pd
 from datetime import datetime
-import plotly.express as px
 
 # ---------------------------
 # CONFIG
@@ -127,24 +126,20 @@ if st.session_state["expenses"]:
 
     with tab1:
         st.subheader("Spending Analysis")
+        
+        # Prepare data for charts
+        by_category = df.groupby("category")["amount"].sum()
+        df_time = df.set_index('date').resample('D')['amount'].sum()
+
         col1, col2 = st.columns(2)
         
         with col1:
-            by_category = df.groupby("category")["amount"].sum().reset_index()
-            fig_pie = px.pie(by_category, names='category', values='amount', title='Expense Distribution by Category', hole=0.3)
-            st.plotly_chart(fig_pie, use_container_width=True)
+            st.subheader("By Category")
+            st.bar_chart(by_category)
 
         with col2:
-            by_category_sorted = by_category.sort_values('amount', ascending=False)
-            fig_bar = px.bar(by_category_sorted, x='amount', y='category', orientation='h', title='Spending per Category')
-            st.plotly_chart(fig_bar, use_container_width=True)
-
-        st.subheader("Spending Trend Over Time")
-        df_time = df.groupby(df['date'].dt.to_period('D'))['amount'].sum().reset_index()
-        df_time['date'] = df_time['date'].dt.to_timestamp()
-        fig_line = px.area(df_time, x='date', y='amount', title='Daily Spending Trend', markers=True)
-        fig_line.update_traces(line=dict(color='cyan', width=2))
-        st.plotly_chart(fig_line, use_container_width=True)
+            st.subheader("Over Time")
+            st.area_chart(df_time)
 
         st.divider()
 
