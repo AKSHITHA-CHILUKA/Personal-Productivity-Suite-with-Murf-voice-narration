@@ -1,115 +1,115 @@
-import streamlit as st
-import pandas as pd
-import matplotlib.pyplot as plt
-import requests
-from datetime import datetime
 import os
+import streamlit as st
+import requests
+import pandas as pd
+from datetime import datetime
 
-# =====================
-# Murf API Setup
-# =====================
-MURF_API_KEY = "ap2_c9a98db3-5e93-4438-9e12-55a57df45f0f"   # 🔑 Replace with your actual API key
-MURF_URL = "https://api.murf.ai/v1/speech/text-to-speech"
+# ---------------------------
+# CONFIG
+# ---------------------------
+MURF_API_KEY="ap2_c9a98db3-5e93-4438-9e12-55a57df45f0f"
+
+# Set in .env or replace here
+MURF_BASE_URL = "https://api.murf.ai/v1"
 
 headers = {
     "Authorization": f"Bearer {MURF_API_KEY}",
     "Content-Type": "application/json"
 }
 
-# =====================
-# Expense Tracker Class
-# =====================
-class ExpenseTracker:
-    def __init__(self):
-        if "expenses" not in st.session_state:
-            st.session_state.expenses = pd.DataFrame(columns=["Date", "Category", "Amount", "Note"])
-
-    def add_expense(self, category, amount, note=""):
-        new_entry = {
-            "Date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "Category": category,
-            "Amount": float(amount),
-            "Note": note
+# ---------------------------
+# MURF FUNCTIONS
+# ---------------------------
+def generate_voice_summary(text, voice_id="en-US_natalie_-_neural"):
+    """Generate voice from text using Murf API."""
+    try:
+        # Use the direct text-to-speech synthesis endpoint
+        tts_url = f"{MURF_BASE_URL}/speech/text-to-speech"
+        
+        payload = {
+            "text": text,
+            "voiceId": voice_id,
+            "format": "MP3",
+            "sampleRate": 44100
         }
-        st.session_state.expenses = pd.concat(
-            [st.session_state.expenses, pd.DataFrame([new_entry])],
-            ignore_index=True
-        )
 
-    def get_summary(self):
-        if st.session_state.expenses.empty:
-            return "No expenses recorded yet."
-        summary = st.session_state.expenses.groupby("Category")["Amount"].sum().to_dict()
-        total = st.session_state.expenses["Amount"].sum()
-        summary_text = "Here is your expense summary:\n"
-        for cat, amt in summary.items():
-            summary_text += f"- {cat}: ${amt:.2f}\n"
-        summary_text += f"Total spent: ${total:.2f}"
-        return summary_text
+        response = requests.post(tts_url, headers=headers, json=payload)
 
-# =====================
-# Murf API - Text to Speech
-# =====================
-def text_to_speech_murf(text, voice="en-US-Wavenet-D", output_file="summary.mp3"):
-    payload = {
-        "voiceId": voice,   # Choose voice from Murf API docs
-        "text": text,
-        "format": "MP3",
-        "sampleRate": "44100"
-    }
-    response = requests.post(MURF_URL, headers=headers, json=payload)
+        if response.status_code != 200:
+            return None, f"❌ Failed to generate speech: {response.text}"
 
-    if response.status_code == 200:
-        with open(output_file, "wb") as f:
-            f.write(response.content)
-        return output_file
-    else:
-        st.error(f"❌ Error from Murf API: {response.text}")
-        return None
+        # The response contains the audio content directly
+        # To play it in streamlit, we need to save it to a file or serve it
+        # For simplicity, we can return the content and let the UI handle it.
+        # However, st.audio needs a URL or a file path. Let's get the URL from the response if available.
+        # Based on Murf documentation, the direct TTS API returns an audio file URL.
+        
+        audio_url = response.json().get("audioFileUrl")
+        if not audio_url:
+             # If the direct audio URL is not in the response, let's check for the content
+             # And save it to a file as a fallback.
+            if response.content:
+                with open("summary.mp3", "wb") as f:
+                    f.write(response.content)
+                return "summary.mp3", None
+            return None, "❌ No audio URL or content returned."
 
-# =====================
-# Streamlit UI
-# =====================
-def main():
-    st.title("💸 Voice-Enabled Expense Tracker")
-    st.write("Track your expenses and get a voice summary using **Murf API** 🎤")
+        return audio_url, None
 
-    tracker = ExpenseTracker()
+    except Exception as e:
+        return None, f"⚠️ Exception: {e}"
 
-    # --- Expense Input Form ---
-    with st.form("expense_form"):
-        category = st.selectbox("Category", ["Food", "Travel", "Shopping", "Bills", "Other"])
-        amount = st.number_input("Amount ($)", min_value=0.01, step=0.01)
-        note = st.text_input("Note (optional)")
-        submitted = st.form_submit_button("Add Expense")
 
-        if submitted:
-            tracker.add_expense(category, amount, note)
-            st.success(f"✅ Added {category} - ${amount:.2f}")
+# ---------------------------
+# STREAMLIT UI
+# ---------------------------
+st.set_page_config(page_title="Expense Tracker with Murf AI", layout="centered")
+st.title("💰 Personal Expense Tracker + Murf AI Voice Summary")
 
-    # --- Display Expenses ---
-    if not st.session_state.expenses.empty:
-        st.subheader("📊 Expense Records")
-        st.dataframe(st.session_state.expenses, use_container_width=True)
+# Store data in session state
+if "expenses" not in st.session_state:
+    st.session_state["expenses"] = []
 
-        # --- Plot Pie Chart ---
-        st.subheader("📈 Expense Distribution")
-        fig, ax = plt.subplots()
-        category_totals = st.session_state.expenses.groupby("Category")["Amount"].sum()
-        ax.pie(category_totals, labels=category_totals.index, autopct="%1.1f%%", startangle=90)
-        ax.axis("equal")
-        st.pyplot(fig)
+# Add expense form
+with st.form("expense_form"):
+    date = st.date_input("Date", datetime.today())
+    category = st.selectbox("Category", ["Food", "Transport", "Shopping", "Bills", "Entertainment", "Other"])
+    amount = st.number_input("Amount", min_value=1.0, step=0.5)
+    submitted = st.form_submit_button("➕ Add Expense")
 
-        # --- Summary ---
-        summary = tracker.get_summary()
-        st.subheader("📝 Expense Summary")
-        st.text(summary)
+    if submitted:
+        st.session_state["expenses"].append({
+            "date": str(date),
+            "category": category,
+            "amount": amount
+        })
+        st.success("✅ Expense added!")
 
-        # --- Generate Voice Summary ---
-        if st.button("🔊 Generate Voice Summary"):
-            output_file = text_to_speech_murf(summary, voice="en-US-male", output_file="expense_summary.mp3")
-            if output_file and os.path.exists(output_file):
-                st.audio(output_file, format="audio/mp3")
+# Display expense table
+if st.session_state["expenses"]:
+    df = pd.DataFrame(st.session_state["expenses"])
+    st.subheader("📊 Expense History")
+    st.dataframe(df)
 
-if __name__ == "__main__":
-    main()
+    # Summary
+    total = df["amount"].sum()
+    by_category = df.groupby("category")["amount"].sum().reset_index()
+
+    st.metric("Total Spent", f"₹{total:.2f}")
+    st.bar_chart(by_category.set_index("category"))
+
+    # Voice Summary
+    st.subheader("🔊 Generate Voice Summary")
+    summary_text = f"You have spent a total of {total:.2f} rupees. "
+    for _, row in by_category.iterrows():
+        summary_text += f"On {row['category']}, you spent {row['amount']:.2f} rupees. "
+
+    if st.button("🎤 Generate Voice"):
+        with st.spinner("Generating voice summary..."):
+            audio_url, error = generate_voice_summary(summary_text)
+            if error:
+                st.error(error)
+            else:
+                st.audio(audio_url)
+else:
+    st.info("ℹ️ Add some expenses to see the summary.")
